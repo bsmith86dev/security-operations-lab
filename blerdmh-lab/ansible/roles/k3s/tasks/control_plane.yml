@@ -1,0 +1,90 @@
+---
+# ansible/roles/k3s/tasks/control_plane.yml
+
+- name: Enable IP forwarding for k3s
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: yes
+
+- name: Enable IPv6 forwarding
+  sysctl:
+    name: net.ipv6.conf.all.forwarding
+    value: '1'
+    state: present
+    reload: yes
+
+- name: Load required kernel modules
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - br_netfilter
+    - overlay
+
+- name: Persist kernel modules
+  copy:
+    dest: /etc/modules-load.d/k3s.conf
+    content: |
+      br_netfilter
+      overlay
+
+- name: Install k3s server (control plane)
+  shell: |
+    curl -sfL https://get.k3s.io | sh -s - server \
+      --cluster-init \
+      --node-ip={{ k3s_server_ip }} \
+      --advertise-address={{ k3s_server_ip }} \
+      --node-name={{ inventory_hostname }} \
+      --disable=traefik \
+      --disable=servicelb \
+      --tls-san={{ k3s_server_ip }} \
+      --tls-san=10.0.10.30 \
+      --write-kubeconfig-mode=644
+  args:
+    creates: /usr/local/bin/k3s
+  environment:
+    INSTALL_K3S_VERSION: "v1.29.3+k3s1"
+
+- name: Wait for k3s to be ready
+  wait_for:
+    port: 6443
+    host: "{{ k3s_server_ip }}"
+    delay: 10
+    timeout: 120
+
+- name: Get k3s node token
+  slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  register: k3s_token_raw
+
+- name: Set k3s token fact
+  set_fact:
+    k3s_node_token: "{{ k3s_token_raw['content'] | b64decode | trim }}"
+
+- name: Share token with workers (dummy task — token stored in hostvars)
+  debug:
+    msg: "k3s token retrieved. Workers will use: {{ k3s_node_token[:20] }}..."
+
+- name: Fetch kubeconfig for local use
+  fetch:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: ~/.kube/blerdmh-lab-config
+    flat: yes
+
+- name: Fix kubeconfig server address
+  delegate_to: localhost
+  replace:
+    path: ~/.kube/blerdmh-lab-config
+    regexp: 'https://127\.0\.0\.1:6443'
+    replace: 'https://10.0.20.10:6443'
+
+- name: Install Tailscale (subnet router on control plane)
+  include_tasks: tailscale.yml
+
+- name: Install Helm
+  shell: |
+    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm

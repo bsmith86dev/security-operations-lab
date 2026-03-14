@@ -1,0 +1,111 @@
+---
+# ansible/playbooks/02-k3s.yml
+# Provisions the k3s cluster — control plane first, then workers
+
+- name: Provision k3s control plane
+  hosts: k3s_control_plane
+  become: yes
+  gather_facts: yes
+  roles:
+    - k3s
+  tags:
+    - k3s
+    - k3s-cp
+
+- name: Provision k3s workers
+  hosts: k3s_workers
+  become: yes
+  gather_facts: yes
+  serial: 1  # Join one at a time to avoid token race
+  roles:
+    - k3s
+  tags:
+    - k3s
+    - k3s-workers
+
+- name: Install cluster-level components
+  hosts: k3s_control_plane
+  become: yes
+  gather_facts: no
+  tasks:
+
+    - name: Install MetalLB
+      shell: |
+        kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.14.5/config/manifests/metallb-native.yaml
+        kubectl wait --namespace metallb-system \
+          --for=condition=ready pod \
+          --selector=app=metallb \
+          --timeout=120s
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Apply MetalLB IP pool
+      copy:
+        dest: /tmp/metallb-pool.yml
+        content: |
+          apiVersion: metallb.io/v1beta1
+          kind: IPAddressPool
+          metadata:
+            name: lab-pool
+            namespace: metallb-system
+          spec:
+            addresses:
+              - 10.0.20.100-10.0.20.200
+          ---
+          apiVersion: metallb.io/v1beta1
+          kind: L2Advertisement
+          metadata:
+            name: lab-l2
+            namespace: metallb-system
+      notify: Apply MetalLB pool
+
+    - name: Install Longhorn storage
+      shell: |
+        helm repo add longhorn https://charts.longhorn.io
+        helm repo update
+        helm upgrade --install longhorn longhorn/longhorn \
+          --namespace longhorn-system \
+          --create-namespace \
+          --set defaultSettings.defaultReplicaCount=2
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Install Traefik v3
+      shell: |
+        helm repo add traefik https://traefik.github.io/charts
+        helm repo update
+        helm upgrade --install traefik traefik/traefik \
+          --namespace traefik \
+          --create-namespace \
+          --values /tmp/traefik-values.yml
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Install Sealed Secrets
+      shell: |
+        helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
+        helm repo update
+        helm upgrade --install sealed-secrets sealed-secrets/sealed-secrets \
+          --namespace kube-system
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+    - name: Install cert-manager
+      shell: |
+        helm repo add jetstack https://charts.jetstack.io
+        helm repo update
+        helm upgrade --install cert-manager jetstack/cert-manager \
+          --namespace cert-manager \
+          --create-namespace \
+          --set installCRDs=true
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+  handlers:
+    - name: Apply MetalLB pool
+      shell: kubectl apply -f /tmp/metallb-pool.yml
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  tags:
+    - k3s
+    - k3s-components

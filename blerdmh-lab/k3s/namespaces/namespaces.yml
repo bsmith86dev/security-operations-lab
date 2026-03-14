@@ -1,0 +1,50 @@
+---
+# k3s/namespaces/namespaces.yml
+# Apply with: kubectl apply -f k3s/namespaces/namespaces.yml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: personal
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    env: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: media
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    env: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: homeauto
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    env: production
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    env: monitoring
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress
+  labels:
+    app.kubernetes.io/managed-by: ansible
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security
+  labels:
+    app.kubernetes.io/managed-by: ansible
+    env: security

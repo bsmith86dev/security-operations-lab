@@ -1,0 +1,54 @@
+---
+# ansible/roles/k3s/tasks/tailscale.yml
+# Installs Tailscale on the k3s control plane Pi 4
+# Advertises internal subnets so you have VPN access to all VLANs
+
+- name: Add Tailscale GPG key
+  apt_key:
+    url: https://pkgs.tailscale.com/stable/ubuntu/focal.noarmor.gpg
+    state: present
+
+- name: Add Tailscale repository
+  apt_repository:
+    repo: "deb https://pkgs.tailscale.com/stable/ubuntu focal main"
+    state: present
+
+- name: Install Tailscale
+  apt:
+    name: tailscale
+    state: present
+    update_cache: yes
+
+- name: Enable IP forwarding for Tailscale subnet router
+  sysctl:
+    name: "{{ item }}"
+    value: '1'
+    state: present
+    reload: yes
+  loop:
+    - net.ipv4.ip_forward
+    - net.ipv6.conf.all.forwarding
+
+- name: Enable and start Tailscale service
+  service:
+    name: tailscaled
+    enabled: yes
+    state: started
+
+- name: Configure Tailscale as subnet router
+  shell: |
+    tailscale up \
+      --authkey={{ tailscale_auth_key }} \
+      --advertise-routes=10.0.10.0/24,10.0.20.0/24,10.0.40.0/24,10.0.60.0/24 \
+      --accept-routes \
+      --hostname=blerdmh-lab-router
+  when: tailscale_auth_key is defined
+  no_log: true
+
+- name: Display Tailscale setup instructions
+  debug:
+    msg: |
+      Tailscale installed. If tailscale_auth_key was not set, run manually:
+        tailscale up --advertise-routes=10.0.10.0/24,10.0.20.0/24,10.0.40.0/24,10.0.60.0/24
+      Then go to Tailscale admin console and approve the subnet routes.
+  when: tailscale_auth_key is not defined

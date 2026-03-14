@@ -1,0 +1,13 @@
+---
+# ansible/playbooks/01-baseline.yml
+# Applies common hardening to all Linux hosts
+
+- name: Baseline all Linux hosts
+  hosts: linux_hosts
+  become: yes
+  gather_facts: yes
+  roles:
+    - common
+  tags:
+    - baseline
+    - always

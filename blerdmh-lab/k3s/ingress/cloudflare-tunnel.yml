@@ -1,0 +1,94 @@
+---
+# k3s/ingress/cloudflare-tunnel.yml
+# Deploys cloudflared as a k3s deployment
+# This creates the secure tunnel — NO ports need to be opened on OPNsense
+
+# First create the tunnel secret (using kubeseal in production):
+# kubectl create secret generic cloudflare-tunnel \
+#   --from-literal=tunnel-token=<YOUR_TUNNEL_TOKEN> \
+#   --namespace=ingress
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: ingress
+  labels:
+    app: cloudflared
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config.yml
+            - run
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: cloudflared-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: ingress
+data:
+  config.yml: |
+    tunnel: blerdmh-lab
+    credentials-file: /etc/cloudflared/creds/credentials.json
+
+    ingress:
+      # Nextcloud
+      - hostname: nextcloud.blerdmh.com
+        service: http://traefik.traefik.svc.cluster.local:80
+        originRequest:
+          noTLSVerify: false
+
+      # Jellyfin
+      - hostname: jellyfin.blerdmh.com
+        service: http://traefik.traefik.svc.cluster.local:80
+
+      # Home Assistant
+      - hostname: ha.blerdmh.com
+        service: http://traefik.traefik.svc.cluster.local:80
+
+      # Grafana (dashboard)
+      - hostname: grafana.blerdmh.com
+        service: http://traefik.traefik.svc.cluster.local:80
+
+      # Proxmox — protected by Cloudflare Access policy
+      - hostname: proxmox.blerdmh.com
+        service: https://10.0.10.10:8006
+        originRequest:
+          noTLSVerify: true
+
+      # Catch-all
+      - service: http_status:404

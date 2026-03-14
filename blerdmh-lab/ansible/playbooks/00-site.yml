@@ -1,0 +1,16 @@
+---
+# ansible/playbooks/00-site.yml
+# Master playbook — runs all other playbooks in order
+# Usage: ansible-playbook -i inventory/hosts.yml playbooks/00-site.yml
+
+- name: Phase 1 — Baseline all Linux hosts
+  import_playbook: 01-baseline.yml
+
+- name: Phase 2 — Provision k3s cluster
+  import_playbook: 02-k3s.yml
+
+- name: Phase 3 — Deploy security stack VMs
+  import_playbook: 03-security.yml
+
+- name: Phase 4 — Deploy k3s workloads
+  import_playbook: 04-k3s-workloads.yml

@@ -1,0 +1,10 @@
+---
+# ansible/roles/k3s/tasks/main.yml
+
+- name: Install k3s control plane
+  include_tasks: control_plane.yml
+  when: node_role == 'control-plane'
+
+- name: Install k3s worker
+  include_tasks: worker.yml
+  when: node_role == 'worker'

@@ -1,0 +1,56 @@
+---
+# ansible/roles/k3s/tasks/worker.yml
+
+- name: Enable IP forwarding
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: yes
+
+- name: Load required kernel modules
+  modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - br_netfilter
+    - overlay
+
+- name: Persist kernel modules
+  copy:
+    dest: /etc/modules-load.d/k3s.conf
+    content: |
+      br_netfilter
+      overlay
+
+- name: Get k3s token from control plane
+  set_fact:
+    k3s_node_token: "{{ hostvars['k3s-cp']['k3s_node_token'] }}"
+
+- name: Install k3s agent (worker)
+  shell: |
+    curl -sfL https://get.k3s.io | sh -s - agent \
+      --server=https://{{ hostvars['k3s-cp']['k3s_server_ip'] }}:6443 \
+      --token={{ k3s_node_token }} \
+      --node-name={{ inventory_hostname }}
+  args:
+    creates: /usr/local/bin/k3s-agent
+  environment:
+    INSTALL_K3S_VERSION: "v1.29.3+k3s1"
+
+- name: Wait for agent to join cluster
+  pause:
+    seconds: 15
+
+- name: Apply node labels
+  delegate_to: k3s-cp
+  shell: |
+    kubectl label node {{ inventory_hostname }} {{ item }} --overwrite
+  loop: "{{ node_labels.split(',') }}"
+  when: node_labels is defined and node_labels != ''
+
+- name: Apply node taints
+  delegate_to: k3s-cp
+  shell: |
+    kubectl taint node {{ inventory_hostname }} {{ node_taints }} --overwrite
+  when: node_taints is defined and node_taints != ''
