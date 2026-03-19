@@ -37,11 +37,11 @@ jobs:
 
       - name: Run detect-secrets baseline check
         run: |
-          pip install detect-secrets
+          pip install detect-secrets==1.5.0
           # If a .secrets.baseline file exists, audit against it
           # Otherwise do a full scan and fail on any findings
           if [ -f .secrets.baseline ]; then
-            detect-secrets audit .secrets.baseline --only-allowlisted
+            detect-secrets audit .secrets.baseline
             git diff --name-only HEAD~1 HEAD | xargs detect-secrets scan --baseline .secrets.baseline
           else
             detect-secrets scan --exclude-files '.*-sealed\.yml' --exclude-files 'vault\.yml' \
