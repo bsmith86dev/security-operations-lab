@@ -1,0 +1,52 @@
+/* blerdmh Lab — MkDocs custom styles */
+
+/* Code blocks — slightly larger for readability */
+.highlight code {
+  font-size: 0.85em;
+}
+
+/* Terminal/bash code blocks get a dark background always */
+.language-bash .highlight,
+.language-shell .highlight {
+  background-color: #1a1a1a !important;
+}
+
+/* Table improvements */
+.md-typeset table:not([class]) {
+  font-size: 0.8em;
+}
+
+/* VLAN badge styling for tables */
+.vlan-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75em;
+  font-weight: 500;
+  font-family: var(--md-code-font);
+}
+
+/* Navigation — highlight active section */
+.md-nav__item--active > .md-nav__link {
+  color: var(--md-accent-fg-color);
+  font-weight: 500;
+}
+
+/* Admonition — custom lab note style */
+.md-typeset .admonition.lab,
+.md-typeset details.lab {
+  border-color: #1D9E75;
+}
+
+.md-typeset .lab > .admonition-title,
+.md-typeset .lab > summary {
+  background-color: rgba(29, 158, 117, 0.1);
+  border-color: #1D9E75;
+}
+
+.md-typeset .lab > .admonition-title::before,
+.md-typeset .lab > summary::before {
+  background-color: #1D9E75;
+  -webkit-mask-image: var(--md-admonition-icon--tip);
+          mask-image: var(--md-admonition-icon--tip);
+}

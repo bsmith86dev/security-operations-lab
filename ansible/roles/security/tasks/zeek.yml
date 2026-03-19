@@ -1,0 +1,94 @@
+---
+# ansible/roles/security/tasks/zeek.yml
+
+- name: Add Zeek repository
+  shell: |
+    echo 'deb http://download.opensuse.org/repositories/security:/zeek/xUbuntu_22.04/ /' | \
+      tee /etc/apt/sources.list.d/security:zeek.list
+    curl -fsSL https://download.opensuse.org/repositories/security:zeek/xUbuntu_22.04/Release.key | \
+      gpg --dearmor | tee /etc/apt/trusted.gpg.d/security_zeek.gpg > /dev/null
+  args:
+    creates: /etc/apt/sources.list.d/security:zeek.list
+
+- name: Install Zeek
+  apt:
+    name: zeek
+    state: present
+    update_cache: yes
+
+- name: Add Zeek to PATH
+  copy:
+    dest: /etc/profile.d/zeek.sh
+    content: |
+      export PATH=/opt/zeek/bin:$PATH
+
+- name: Configure Zeek node
+  copy:
+    dest: /opt/zeek/etc/node.cfg
+    content: |
+      [zeek]
+      type=standalone
+      host=localhost
+      interface={{ suricata_interface }}
+  notify: Restart Zeek
+
+- name: Configure Zeek networks
+  template:
+    src: zeek-networks.cfg.j2
+    dest: /opt/zeek/etc/networks.cfg
+  notify: Restart Zeek
+
+- name: Configure Zeek log rotation
+  copy:
+    dest: /etc/logrotate.d/zeek
+    content: |
+      /var/log/zeek/current/*.log {
+          daily
+          rotate 14
+          missingok
+          compress
+          delaycompress
+      }
+
+- name: Install Zeekctl for management
+  shell: /opt/zeek/bin/zeekctl install
+  args:
+    creates: /opt/zeek/spool/zeekctl-config.sh
+  ignore_errors: yes
+
+- name: Deploy Zeek local scripts (custom detections)
+  copy:
+    dest: /opt/zeek/share/zeek/site/local.zeek
+    content: |
+      ##! Zeek local site policy — blerdmh Lab
+      @load base/protocols/conn
+      @load base/protocols/dns
+      @load base/protocols/http
+      @load base/protocols/ssh
+      @load base/protocols/ssl
+      @load base/protocols/ftp
+      @load base/frameworks/notice
+      @load policy/frameworks/notice/community-id
+      @load policy/misc/scan
+      @load policy/protocols/conn/known-hosts
+      @load policy/protocols/conn/known-services
+      @load policy/protocols/ssh/detect-bruteforcing
+      @load policy/protocols/dns/detect-external-names
+      # Forward logs to Wazuh agent via file (agent reads /var/log/zeek)
+
+- name: Start Zeek via zeekctl
+  shell: /opt/zeek/bin/zeekctl start
+  ignore_errors: yes
+
+- name: Create Zeek cron for daily restart (clears log handles)
+  cron:
+    name: "Zeek daily restart"
+    hour: "0"
+    minute: "5"
+    job: "/opt/zeek/bin/zeekctl restart"
+    user: root
+
+handlers:
+  - name: Restart Zeek
+    shell: /opt/zeek/bin/zeekctl restart
+    ignore_errors: yes

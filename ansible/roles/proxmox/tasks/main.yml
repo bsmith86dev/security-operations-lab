@@ -1,0 +1,129 @@
+---
+# ansible/roles/proxmox/tasks/main.yml
+# Configures Proxmox nodes post-install
+# Handles: network bridge, Ceph init, cloud-init template, VM creation
+
+- name: Configure VLAN-aware bridge
+  copy:
+    dest: /etc/network/interfaces
+    content: "{{ lookup('template', 'interfaces.j2') }}"
+    backup: yes
+  notify: Restart networking
+
+- name: Disable Proxmox subscription nag (community use)
+  replace:
+    path: /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+    regexp: "Ext.Msg.show\\(\\{\\s*title: gettext\\('No valid subscription'"
+    replace: "void({"
+  notify: Restart pveproxy
+
+- name: Add Proxmox community (no-subscription) repo
+  copy:
+    dest: /etc/apt/sources.list.d/pve-community.list
+    content: |
+      # Proxmox community repo (no subscription required)
+      deb http://download.proxmox.com/debian/pve bookworm pve-no-subscription
+  notify: Update apt cache
+
+- name: Remove enterprise repo (avoid apt errors without subscription)
+  file:
+    path: /etc/apt/sources.list.d/pve-enterprise.list
+    state: absent
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+
+- name: Install useful Proxmox tools
+  apt:
+    name:
+      - pve-headers
+      - ifupdown2
+      - libpve-storage-perl
+      - prometheus-node-exporter
+    state: present
+
+- name: Enable and start node exporter
+  service:
+    name: prometheus-node-exporter
+    enabled: yes
+    state: started
+
+- name: Configure node exporter to listen on all interfaces
+  copy:
+    dest: /etc/default/prometheus-node-exporter
+    content: |
+      ARGS="--web.listen-address=0.0.0.0:9100"
+  notify: Restart node exporter
+
+- name: Download Ubuntu 22.04 cloud image (for VM template)
+  get_url:
+    url: https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
+    dest: /var/lib/vz/template/iso/jammy-server-cloudimg-amd64.img
+    mode: '0644'
+  when: pve_role == 'primary'
+
+- name: Create cloud-init VM template
+  shell: |
+    # Only create if template doesn't exist
+    if ! qm status {{ proxmox_template_vmid }} &>/dev/null; then
+      qm create {{ proxmox_template_vmid }} \
+        --name {{ proxmox_template_name }} \
+        --memory 2048 \
+        --cores 2 \
+        --net0 virtio,bridge={{ proxmox_bridge }} \
+        --ostype l26
+
+      qm importdisk {{ proxmox_template_vmid }} \
+        /var/lib/vz/template/iso/jammy-server-cloudimg-amd64.img \
+        {{ proxmox_vm_storage }}
+
+      qm set {{ proxmox_template_vmid }} \
+        --scsihw virtio-scsi-pci \
+        --scsi0 {{ proxmox_vm_storage }}:vm-{{ proxmox_template_vmid }}-disk-0
+
+      qm set {{ proxmox_template_vmid }} \
+        --ide2 {{ proxmox_vm_storage }}:cloudinit
+
+      qm set {{ proxmox_template_vmid }} \
+        --boot c --bootdisk scsi0 \
+        --serial0 socket \
+        --vga serial0 \
+        --agent enabled=1 \
+        --ipconfig0 ip=dhcp
+
+      qm set {{ proxmox_template_vmid }} \
+        --sshkey /root/.ssh/authorized_keys
+
+      qm template {{ proxmox_template_vmid }}
+      echo "Template created"
+    else
+      echo "Template already exists"
+    fi
+  register: template_result
+  changed_when: "'Template created' in template_result.stdout"
+  when: pve_role == 'primary'
+
+- name: Initialize Ceph on primary node
+  include_tasks: ceph.yml
+  when: pve_role == 'primary'
+
+handlers:
+  - name: Restart networking
+    service:
+      name: networking
+      state: restarted
+
+  - name: Restart pveproxy
+    service:
+      name: pveproxy
+      state: restarted
+
+  - name: Update apt cache
+    apt:
+      update_cache: yes
+
+  - name: Restart node exporter
+    service:
+      name: prometheus-node-exporter
+      state: restarted

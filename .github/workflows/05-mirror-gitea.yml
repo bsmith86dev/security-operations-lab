@@ -1,0 +1,74 @@
+name: Mirror — Sync to Self-Hosted Gitea
+
+on:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+
+  mirror-to-gitea:
+    name: Mirror to Gitea (N1 Mini LXC)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history including all branches and tags
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci-runner
+          ephemeral: true
+
+      - name: Verify Gitea reachability
+        run: |
+          curl -sf --max-time 10 \
+            http://10.0.10.50:3000/api/v1/version \
+            -H "Authorization: token ${{ secrets.GITEA_MIRROR_TOKEN }}" | \
+            python3 -m json.tool | grep version
+          echo "✓ Gitea reachable"
+
+      - name: Ensure mirror repo exists in Gitea
+        run: |
+          # Create repo if it doesn't exist
+          REPO_EXISTS=$(curl -sf \
+            "http://10.0.10.50:3000/api/v1/repos/labadmin/blerdmh-lab" \
+            -H "Authorization: token ${{ secrets.GITEA_MIRROR_TOKEN }}" \
+            -o /dev/null -w "%{http_code}")
+
+          if [ "$REPO_EXISTS" == "404" ]; then
+            echo "Creating repo in Gitea..."
+            curl -sf -X POST \
+              "http://10.0.10.50:3000/api/v1/user/repos" \
+              -H "Authorization: token ${{ secrets.GITEA_MIRROR_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "name": "blerdmh-lab",
+                "description": "Cybersecurity home lab IaC — mirrored from GitHub",
+                "private": true,
+                "auto_init": false
+              }'
+            echo "✓ Repo created"
+          else
+            echo "✓ Repo already exists"
+          fi
+
+      - name: Push all branches to Gitea mirror
+        run: |
+          git remote add gitea \
+            "http://labadmin:${{ secrets.GITEA_MIRROR_TOKEN }}@10.0.10.50:3000/labadmin/blerdmh-lab.git"
+
+          # Push all branches
+          git push gitea --all --force
+          # Push all tags
+          git push gitea --tags --force
+
+          echo "✓ Mirrored to Gitea successfully"
+
+      - name: Disconnect Tailscale
+        if: always()
+        run: sudo tailscale logout

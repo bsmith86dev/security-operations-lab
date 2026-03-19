@@ -1,0 +1,16 @@
+---
+# ansible/inventory/group_vars/k3s_cluster/main.yml
+
+# k3s install settings
+k3s_server_ip: 10.0.20.10
+k3s_flannel_iface: eth0
+
+# Longhorn settings
+longhorn_replica_count: 2
+longhorn_storage_class: longhorn
+
+# Node exporter port for Prometheus scraping
+node_exporter_port: 9100
+
+# Wazuh agent group for k3s nodes
+wazuh_group: k3s-nodes

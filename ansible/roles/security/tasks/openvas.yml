@@ -1,0 +1,53 @@
+---
+# ansible/roles/security/tasks/openvas.yml
+# Installs Greenbone Community Edition (OpenVAS)
+
+- name: Download Greenbone Community Edition setup script
+  get_url:
+    url: https://greenbone.github.io/docs/latest/_static/setup-and-start-greenbone-community-edition.sh
+    dest: /tmp/setup-greenbone.sh
+    mode: '0755'
+
+- name: Run Greenbone CE setup script
+  shell: /tmp/setup-greenbone.sh
+  args:
+    creates: /usr/local/bin/gvm-cli
+  register: greenbone_install
+  async: 1800   # GCE install downloads a lot of NVT data — allow 30 mins
+  poll: 30
+
+- name: Wait for Greenbone services to be ready
+  wait_for:
+    port: 9392
+    host: "{{ ansible_host }}"
+    delay: 30
+    timeout: 300
+
+- name: Set OpenVAS admin password
+  shell: |
+    gvmd --user=admin --new-password="{{ openvas_admin_password }}"
+  no_log: true
+  ignore_errors: yes
+
+- name: Create scan targets for each lab VLAN
+  shell: |
+    gvm-cli --gmp-username admin --gmp-password "{{ openvas_admin_password }}" \
+      socket --xml "<create_target>
+        <name>{{ item.name }}</name>
+        <hosts>{{ item.subnet }}</hosts>
+        <comment>blerdmh Lab - {{ item.name }}</comment>
+      </create_target>"
+  loop:
+    - { name: "SERVERS-VLAN20", subnet: "10.0.20.0/24" }
+    - { name: "PRODUCTION-VLAN60", subnet: "10.0.60.0/24" }
+    - { name: "PURPLE-TEAM-VLAN62", subnet: "10.0.62.0/24" }
+  no_log: true
+  ignore_errors: yes
+
+- name: Schedule daily NVT feed update
+  cron:
+    name: "OpenVAS NVT update"
+    hour: "2"
+    minute: "0"
+    job: "greenbone-nvt-sync && greenbone-scapdata-sync && greenbone-certdata-sync"
+    user: root

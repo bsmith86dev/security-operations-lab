@@ -1,0 +1,232 @@
+name: PR — Live Cluster Dry-Run
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: pr-dryrun-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 1 — Detect what changed in this PR
+  # Only runs dry-run on files that actually changed
+  # ──────────────────────────────────────────────────────────────────────────
+  detect-changes:
+    name: Detect Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      k3s_changed: ${{ steps.changes.outputs.k3s }}
+      ansible_changed: ${{ steps.changes.outputs.ansible }}
+      switch_changed: ${{ steps.changes.outputs.switch }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changes
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            k3s:
+              - 'k3s/**'
+            ansible:
+              - 'ansible/**'
+            switch:
+              - 'switch/**'
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 2 — kubectl apply --dry-run against live cluster via Tailscale
+  # ──────────────────────────────────────────────────────────────────────────
+  k3s-dry-run:
+    name: kubectl Dry-Run (Live Cluster)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.k3s_changed == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Connect to Tailnet — gives runner access to 10.0.20.10:6443
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci-runner
+          # Ephemeral — node is removed from Tailnet after job completes
+          ephemeral: true
+
+      - name: Verify cluster connectivity
+        run: |
+          echo "Testing connectivity to k3s API..."
+          curl -sk --max-time 10 https://10.0.20.10:6443/healthz | grep -q "ok" && \
+            echo "✓ k3s API reachable via Tailscale" || \
+            (echo "✗ Cannot reach k3s API" && exit 1)
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.29.3'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_BASE64 }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          # Verify we can actually talk to the cluster
+          kubectl cluster-info
+
+      - name: Dry-run changed k3s manifests
+        run: |
+          echo "## kubectl Dry-Run Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          FAILED=0
+          PASSED=0
+
+          # Get list of changed k3s manifest files
+          git diff --name-only origin/${{ github.base_ref }}...HEAD -- k3s/ | \
+          grep -E '\.(yml|yaml)$' | \
+          grep -v 'sealed\|values' | \
+          while read manifest; do
+            echo "Dry-running: $manifest"
+            if kubectl apply --dry-run=server -f "$manifest" 2>&1; then
+              echo "| ✅ | \`$manifest\` | OK |" >> $GITHUB_STEP_SUMMARY
+              PASSED=$((PASSED + 1))
+            else
+              echo "| ❌ | \`$manifest\` | FAILED |" >> $GITHUB_STEP_SUMMARY
+              FAILED=$((FAILED + 1))
+            fi
+          done
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED manifest(s) failed dry-run validation"
+            exit 1
+          fi
+          echo "All manifests passed dry-run validation"
+
+      - name: Check for namespace drift
+        run: |
+          # Compare namespaces in manifests vs cluster
+          MANIFEST_NS=$(grep -rh "namespace:" k3s/ | grep -v "#" | \
+            awk '{print $2}' | sort -u | grep -v "^$")
+          CLUSTER_NS=$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | sort)
+
+          echo "Namespaces in manifests:"
+          echo "$MANIFEST_NS"
+          echo ""
+          echo "Namespaces in cluster:"
+          echo "$CLUSTER_NS"
+
+      - name: Diff current vs proposed state
+        run: |
+          # Show what would actually change in the cluster
+          git diff --name-only origin/${{ github.base_ref }}...HEAD -- k3s/ | \
+          grep -E '\.(yml|yaml)$' | \
+          grep -v 'sealed\|values' | \
+          while read manifest; do
+            echo "=== Diff for $manifest ==="
+            kubectl diff -f "$manifest" 2>/dev/null || true
+            echo ""
+          done | head -200  # Cap output length
+
+      # Always disconnect cleanly
+      - name: Disconnect Tailscale
+        if: always()
+        run: sudo tailscale logout
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Ansible dry-run (--check mode)
+  # Does not need cluster access — runs against inventory syntax only
+  # ──────────────────────────────────────────────────────────────────────────
+  ansible-dry-run:
+    name: Ansible Dry-Run (--check)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.ansible_changed == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Ansible
+        run: pip install ansible ansible-lint
+
+      - name: Create mock vault password file
+        run: echo "mock-vault-password" > /tmp/vault-pass
+
+      - name: Syntax check all playbooks
+        run: |
+          for playbook in ansible/playbooks/*.yml; do
+            echo "Checking: $playbook"
+            ansible-playbook \
+              -i ansible/inventory/hosts.yml \
+              "$playbook" \
+              --syntax-check \
+              --vault-password-file /tmp/vault-pass \
+              2>&1
+          done
+
+      - name: Validate role structure
+        run: |
+          bash .github/scripts/check-role-structure.sh
+
+      - name: Check for deprecated Ansible modules
+        run: |
+          ansible-lint ansible/ \
+            --warn-list deprecated-bare-vars,deprecated-command-syntax \
+            --format github \
+            --exclude ansible/inventory/group_vars/all/vault.yml || true
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 4 — PR summary comment
+  # Posts a comment on the PR with all results
+  # ──────────────────────────────────────────────────────────────────────────
+  pr-comment:
+    name: Post PR Summary
+    runs-on: ubuntu-latest
+    needs: [k3s-dry-run, ansible-dry-run]
+    if: always()
+    steps:
+      - name: Post results comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const k3sResult = '${{ needs.k3s-dry-run.result }}';
+            const ansibleResult = '${{ needs.ansible-dry-run.result }}';
+
+            const statusEmoji = (r) => {
+              if (r === 'success') return '✅';
+              if (r === 'failure') return '❌';
+              if (r === 'skipped') return '⏭️';
+              return '⚠️';
+            };
+
+            const body = `## 🔍 PR Validation Results
+
+            | Check | Status |
+            |-------|--------|
+            | kubectl dry-run (live cluster) | ${statusEmoji(k3sResult)} ${k3sResult} |
+            | Ansible syntax + dry-run | ${statusEmoji(ansibleResult)} ${ansibleResult} |
+
+            ${k3sResult === 'failure' ? '> ❌ **kubectl dry-run failed** — check the workflow logs for which manifests need fixing.' : ''}
+            ${ansibleResult === 'failure' ? '> ❌ **Ansible dry-run failed** — check playbook syntax errors in the workflow logs.' : ''}
+            ${k3sResult === 'success' && ansibleResult === 'success' ? '> ✅ All checks passed — safe to merge.' : ''}
+
+            _Run ID: ${{ github.run_id }} | Commit: ${{ github.sha.substring(0, 7) }}_`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });

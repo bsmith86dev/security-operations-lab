@@ -1,0 +1,217 @@
+---
+# ansible/playbooks/03-security.yml
+# Provisions all security stack VMs on AMDPVE (VLAN 40)
+
+- name: Install Wazuh all-in-one (manager + indexer + dashboard)
+  hosts: wazuh-vm
+  become: yes
+  gather_facts: yes
+  tasks:
+
+    - name: Check if Wazuh is already installed
+      stat:
+        path: /usr/share/wazuh-dashboard
+      register: wazuh_installed
+
+    - name: Download Wazuh install script
+      get_url:
+        url: https://packages.wazuh.com/{{ wazuh_version }}/wazuh-install.sh
+        dest: /tmp/wazuh-install.sh
+        mode: '0755'
+      when: not wazuh_installed.stat.exists
+
+    - name: Download Wazuh config template
+      get_url:
+        url: https://packages.wazuh.com/{{ wazuh_version }}/config.yml
+        dest: /tmp/wazuh-config.yml
+        mode: '0644'
+      when: not wazuh_installed.stat.exists
+
+    - name: Configure Wazuh node IPs
+      replace:
+        path: /tmp/wazuh-config.yml
+        regexp: '<indexer-node-ip>'
+        replace: '10.0.40.10'
+      when: not wazuh_installed.stat.exists
+
+    - name: Configure Wazuh server IP
+      replace:
+        path: /tmp/wazuh-config.yml
+        regexp: '<wazuh-manager-ip>'
+        replace: '10.0.40.10'
+      when: not wazuh_installed.stat.exists
+
+    - name: Configure Wazuh dashboard IP
+      replace:
+        path: /tmp/wazuh-config.yml
+        regexp: '<dashboard-node-ip>'
+        replace: '10.0.40.10'
+      when: not wazuh_installed.stat.exists
+
+    - name: Generate Wazuh certificates
+      shell: bash /tmp/wazuh-install.sh --generate-config-files
+      args:
+        creates: /tmp/wazuh-certificates.tar
+      when: not wazuh_installed.stat.exists
+
+    - name: Install Wazuh indexer (OpenSearch)
+      shell: bash /tmp/wazuh-install.sh --wazuh-indexer node-1
+      args:
+        creates: /etc/wazuh-indexer
+      when: not wazuh_installed.stat.exists
+      async: 600
+      poll: 30
+
+    - name: Start Wazuh indexer cluster
+      shell: bash /tmp/wazuh-install.sh --start-cluster
+      when: not wazuh_installed.stat.exists
+
+    - name: Install Wazuh server (manager)
+      shell: bash /tmp/wazuh-install.sh --wazuh-server wazuh-1
+      args:
+        creates: /var/ossec
+      when: not wazuh_installed.stat.exists
+      async: 600
+      poll: 30
+
+    - name: Install Wazuh dashboard
+      shell: bash /tmp/wazuh-install.sh --wazuh-dashboard wazuh-1
+      args:
+        creates: /usr/share/wazuh-dashboard
+      when: not wazuh_installed.stat.exists
+      async: 300
+      poll: 15
+
+    - name: Configure Wazuh to accept agents from all VLANs
+      lineinfile:
+        path: /var/ossec/etc/ossec.conf
+        regexp: '<allowed-ips>'
+        line: '      <allowed-ips>10.0.0.0/8</allowed-ips>'
+        insertafter: '<remote>'
+      notify: Restart Wazuh manager
+
+    - name: Configure Wazuh syslog receiver (for OPNsense + other devices)
+      blockinfile:
+        path: /var/ossec/etc/ossec.conf
+        marker: "<!-- {mark} ANSIBLE MANAGED SYSLOG BLOCK -->"
+        insertbefore: '</ossec_config>'
+        block: |
+          <remote>
+            <connection>syslog</connection>
+            <port>514</port>
+            <protocol>udp</protocol>
+            <allowed-ips>10.0.0.0/8</allowed-ips>
+          </remote>
+      notify: Restart Wazuh manager
+
+    - name: Enable Wazuh agents
+      service:
+        name: wazuh-manager
+        enabled: yes
+        state: started
+
+    - name: Display Wazuh dashboard credentials
+      shell: |
+        grep -A 2 "User: admin" /tmp/wazuh-install.sh 2>/dev/null || \
+        echo "Check /tmp/wazuh-passwords.txt for credentials"
+      register: wazuh_creds
+      changed_when: false
+
+    - name: Show Wazuh access info
+      debug:
+        msg: |
+          Wazuh dashboard: https://10.0.40.10
+          {{ wazuh_creds.stdout }}
+
+  handlers:
+    - name: Restart Wazuh manager
+      service:
+        name: wazuh-manager
+        state: restarted
+
+- name: Install IDS stack (Suricata + Zeek)
+  hosts: ids-vm
+  become: yes
+  gather_facts: yes
+  roles:
+    - common
+    - security
+  tags:
+    - ids
+
+- name: Install OpenVAS vulnerability scanner
+  hosts: openvas-vm
+  become: yes
+  gather_facts: yes
+  roles:
+    - common
+    - security
+  tags:
+    - openvas
+
+- name: Install Grafana monitoring stack
+  hosts: grafana-vm
+  become: yes
+  gather_facts: yes
+  tasks:
+
+    - name: Add Grafana apt repository
+      block:
+        - apt_key:
+            url: https://apt.grafana.com/gpg.key
+            state: present
+        - apt_repository:
+            repo: "deb https://apt.grafana.com stable main"
+            state: present
+            filename: grafana
+
+    - name: Install Grafana
+      apt:
+        name: grafana
+        state: present
+        update_cache: yes
+
+    - name: Install Prometheus
+      get_url:
+        url: https://github.com/prometheus/prometheus/releases/download/v2.51.0/prometheus-2.51.0.linux-amd64.tar.gz
+        dest: /tmp/prometheus.tar.gz
+
+    - name: Extract and install Prometheus
+      unarchive:
+        src: /tmp/prometheus.tar.gz
+        dest: /usr/local/bin/
+        remote_src: yes
+        extra_opts: [--strip-components=1]
+        creates: /usr/local/bin/prometheus
+
+    - name: Install Prometheus systemd service
+      copy:
+        dest: /etc/systemd/system/prometheus.service
+        content: |
+          [Unit]
+          Description=Prometheus
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=prometheus
+          ExecStart=/usr/local/bin/prometheus \
+            --config.file=/etc/prometheus/prometheus.yml \
+            --storage.tsdb.path=/var/lib/prometheus \
+            --storage.tsdb.retention.time=30d \
+            --web.listen-address=0.0.0.0:9090
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start Grafana + Prometheus
+      service:
+        name: "{{ item }}"
+        enabled: yes
+        state: started
+      loop:
+        - grafana-server
+        - prometheus
+  tags:
+    - grafana

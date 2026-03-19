@@ -1,0 +1,73 @@
+---
+# k3s/security/amd-gpu-device-plugin.yml
+# AMD GPU Device Plugin for Kubernetes
+# Enables pods to request GPU resources via: amd.com/gpu: 1
+#
+# Prerequisites:
+#   - GPU passthrough configured (docs/03-GPU-PASSTHROUGH.md)
+#   - k3s-worker-amd labeled: kubectl label node k3s-worker-amd amd.com/gpu=present
+#   - /dev/dri/renderD128 visible inside the k3s-worker-amd VM
+#
+# Apply: kubectl apply -f k3s/security/amd-gpu-device-plugin.yml
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: amdgpu-device-plugin
+  namespace: kube-system
+  labels:
+    app: amdgpu-device-plugin
+spec:
+  selector:
+    matchLabels:
+      app: amdgpu-device-plugin
+  template:
+    metadata:
+      labels:
+        app: amdgpu-device-plugin
+    spec:
+      # Only run on nodes with the GPU label
+      nodeSelector:
+        amd.com/gpu: "present"
+
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+        - key: amd.com/gpu
+          effect: NoSchedule
+          operator: Exists
+
+      priorityClassName: system-node-critical
+
+      containers:
+        - name: amdgpu-dp
+          image: rocm/k8s-device-plugin:latest
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: dp
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: sys
+              mountPath: /sys
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+
+      volumes:
+        - name: dp
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+        - name: sys
+          hostPath:
+            path: /sys
+---
+# Verify GPU is allocatable after applying:
+#   kubectl describe node k3s-worker-amd | grep -A 10 "Allocatable"
+# Expected:
+#   amd.com/gpu: 1

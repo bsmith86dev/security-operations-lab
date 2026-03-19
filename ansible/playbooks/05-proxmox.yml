@@ -1,0 +1,12 @@
+---
+# ansible/playbooks/05-proxmox.yml
+# Configures Proxmox nodes post-install
+
+- name: Configure Proxmox nodes
+  hosts: proxmox_nodes
+  become: yes
+  gather_facts: yes
+  roles:
+    - proxmox
+  tags:
+    - proxmox

@@ -1,0 +1,50 @@
+---
+# ansible/inventory/group_vars/all/main.yml
+# Variables applied to ALL hosts
+
+# ─── Lab identity ──────────────────────────────────────────────────────────
+lab_domain: blerdmh.com
+lab_internal_domain: lab.blerdmh.local
+lab_timezone: America/Chicago
+lab_admin_user: labadmin
+lab_admin_email: admin@lab.blerdmh.local
+
+# ─── Network ───────────────────────────────────────────────────────────────
+lab_dns_server: 10.0.10.1
+lab_ntp_server: 10.0.10.1
+
+# VLAN subnets — used in firewall rules and Wazuh agent config
+vlans:
+  mgmt:      { id: 10, subnet: "10.0.10.0/24", gw: "10.0.10.1" }
+  servers:   { id: 20, subnet: "10.0.20.0/24", gw: "10.0.20.1" }
+  ceph_pub:  { id: 30, subnet: "10.0.30.0/24", gw: "10.0.30.1" }
+  ceph_clus: { id: 31, subnet: "10.0.31.0/24", gw: null }
+  security:  { id: 40, subnet: "10.0.40.0/24", gw: "10.0.40.1" }
+  iot:       { id: 50, subnet: "10.0.50.0/24", gw: "10.0.50.1" }
+  production:{ id: 60, subnet: "10.0.60.0/24", gw: "10.0.60.1" }
+  red_team:  { id: 61, subnet: "10.0.61.0/24", gw: "10.0.61.1" }
+  purple_team:{ id: 62, subnet: "10.0.62.0/24", gw: "10.0.62.1" }
+  guest:     { id: 70, subnet: "10.0.70.0/24", gw: "10.0.70.1" }
+
+# ─── Security stack endpoints ─────────────────────────────────────────────
+wazuh_manager_ip: 10.0.40.10
+wazuh_manager_port: 1514
+wazuh_enrollment_port: 1515
+
+# ─── k3s ──────────────────────────────────────────────────────────────────
+k3s_version: "v1.29.3+k3s1"
+k3s_api_ip: 10.0.20.10
+k3s_api_port: 6443
+metallb_pool_start: 10.0.20.100
+metallb_pool_end: 10.0.20.200
+
+# ─── NAS ──────────────────────────────────────────────────────────────────
+nas_ip: 10.0.20.20
+nas_mgmt_ip: 10.0.10.40
+nas_nfs_media_path: /mnt/tank/media
+nas_nfs_nextcloud_path: /mnt/tank/nextcloud
+nas_nfs_backups_path: /mnt/tank/backups
+
+# ─── Package versions ─────────────────────────────────────────────────────
+wazuh_version: "4.7"
+gitea_version: "1.21.11"

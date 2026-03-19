@@ -1,0 +1,23 @@
+---
+# ansible/inventory/group_vars/security_vms/main.yml
+
+# Wazuh group for security VMs
+wazuh_group: security-stack
+
+# Suricata settings (ids-vm)
+suricata_interface: eth0
+suricata_rules_update_interval: daily
+suricata_log_dir: /var/log/suricata
+
+# Zeek settings (ids-vm)
+zeek_interface: eth0
+zeek_log_dir: /var/log/zeek
+
+# OpenVAS/Greenbone settings (openvas-vm)
+openvas_admin_password: "{{ vault_wazuh_api_password }}"
+
+# Prometheus node exporter
+node_exporter_port: 9100
+
+# All security VMs ship logs to Wazuh manager on the same VLAN
+wazuh_manager_ip: 10.0.40.10

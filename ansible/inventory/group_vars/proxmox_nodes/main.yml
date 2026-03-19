@@ -1,0 +1,27 @@
+---
+# ansible/inventory/group_vars/proxmox_nodes/main.yml
+
+# Proxmox API connection (used by community.general.proxmox modules)
+proxmox_api_host: "{{ ansible_host }}"
+proxmox_api_user: "root@pam"
+proxmox_api_token_id: "{{ vault_proxmox_api_token_id }}"
+proxmox_api_token_secret: "{{ vault_proxmox_api_token_secret }}"
+proxmox_verify_ssl: false
+
+# Proxmox storage targets
+proxmox_vm_storage: local-lvm
+proxmox_iso_storage: local
+proxmox_backup_storage: local
+
+# Cloud-init template ID
+proxmox_template_vmid: 9000
+proxmox_template_name: ubuntu-2204-template
+
+# Ceph settings
+ceph_version: reef
+ceph_public_network: "10.0.30.0/24"
+ceph_cluster_network: "10.0.31.0/24"
+
+# Bridge settings
+proxmox_bridge: vmbr0
+proxmox_bridge_vlan_aware: true

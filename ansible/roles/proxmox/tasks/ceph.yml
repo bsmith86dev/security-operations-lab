@@ -1,0 +1,75 @@
+---
+# ansible/roles/proxmox/tasks/ceph.yml
+# Initializes Ceph cluster — runs only on primary node (AMDPVE)
+# N1 Mini and ZimaBoard join after primary is initialized
+
+- name: Install Ceph packages via pveceph
+  shell: pveceph install --version reef
+  args:
+    creates: /usr/bin/ceph
+
+- name: Initialize Ceph cluster
+  shell: |
+    pveceph init \
+      --network {{ ceph_public_network }} \
+      --cluster-network {{ ceph_cluster_network }}
+  args:
+    creates: /etc/ceph/ceph.conf
+
+- name: Create Ceph monitor on primary node
+  shell: pveceph mon create
+  args:
+    creates: /var/lib/ceph/mon/ceph-{{ inventory_hostname }}
+
+- name: Create Ceph manager on primary node
+  shell: pveceph mgr create
+  args:
+    creates: /var/lib/ceph/mgr/ceph-{{ inventory_hostname }}
+
+- name: Identify available OSD disks
+  shell: |
+    lsblk -dpno NAME,SIZE,TYPE | grep disk | awk '{print $1}' | \
+    while read disk; do
+      # Skip OS disk (find boot disk)
+      if ! lsblk "$disk" | grep -q "/$\|/boot"; then
+        echo "$disk"
+      fi
+    done
+  register: osd_candidates
+  changed_when: false
+
+- name: Display OSD candidates
+  debug:
+    msg: |
+      Available disks for Ceph OSD:
+      {{ osd_candidates.stdout_lines }}
+      Review these carefully — the Ceph OSD creation task is commented out.
+      Uncomment and specify the correct disks after reviewing.
+
+# ── IMPORTANT: Uncomment and edit these after verifying disk names ──────
+# The disks listed are examples — verify with: lsblk on each Proxmox node
+#
+# - name: Create OSDs on AMDPVE (2TB Seagate + 2TB Hitachi)
+#   shell: pveceph osd create {{ item }}
+#   loop:
+#     - /dev/sda    # 2TB Seagate Barracuda
+#     - /dev/sdb    # 2TB Hitachi
+#   args:
+#     creates: /var/lib/ceph/osd/ceph-0
+#
+# - name: Create Ceph pool for VM storage
+#   shell: |
+#     pveceph pool create vm-pool --size 2 --min-size 1
+#   args:
+#     creates: /etc/pve/storage.cfg.d/ceph.cfg
+
+- name: Check Ceph cluster health
+  shell: ceph -s
+  register: ceph_status
+  changed_when: false
+  ignore_errors: yes
+
+- name: Display Ceph status
+  debug:
+    msg: "{{ ceph_status.stdout }}"
+  when: ceph_status.rc == 0

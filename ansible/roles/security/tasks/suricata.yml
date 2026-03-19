@@ -1,0 +1,64 @@
+---
+# ansible/roles/security/tasks/suricata.yml
+
+- name: Add Suricata repository
+  apt_repository:
+    repo: ppa:oisf/suricata-stable
+    state: present
+  when: ansible_distribution == 'Ubuntu'
+
+- name: Install Suricata
+  apt:
+    name: suricata
+    state: present
+    update_cache: yes
+
+- name: Deploy Suricata configuration
+  template:
+    src: suricata.yaml.j2
+    dest: /etc/suricata/suricata.yaml
+    owner: root
+    group: root
+    mode: '0640'
+  notify: Restart Suricata
+
+- name: Update Suricata rules (ET Open)
+  shell: suricata-update
+  changed_when: true
+  notify: Restart Suricata
+
+- name: Create Suricata rule update cron
+  cron:
+    name: "Update Suricata rules"
+    hour: "3"
+    minute: "0"
+    job: "suricata-update && systemctl reload suricata"
+    user: root
+
+- name: Configure Suricata log rotation
+  copy:
+    dest: /etc/logrotate.d/suricata
+    content: |
+      /var/log/suricata/*.log /var/log/suricata/*.json {
+          daily
+          rotate 7
+          missingok
+          compress
+          delaycompress
+          sharedscripts
+          postrotate
+              /bin/kill -HUP $(cat /var/run/suricata.pid 2>/dev/null) 2>/dev/null || true
+          endscript
+      }
+
+- name: Enable and start Suricata
+  service:
+    name: suricata
+    enabled: yes
+    state: started
+
+handlers:
+  - name: Restart Suricata
+    service:
+      name: suricata
+      state: restarted

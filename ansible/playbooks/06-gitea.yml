@@ -1,0 +1,75 @@
+---
+# ansible/playbooks/06-gitea.yml
+# Provisions Gitea on N1 Mini LXC (VMID 302, IP 10.0.10.50)
+#
+# Prerequisites:
+#   - LXC container created in Proxmox (see docs/01-PROXMOX-VM-LAYOUT.md)
+#   - LXC is running and SSH accessible at 10.0.10.50
+#   - labadmin user exists with SSH key access
+#   - Add gitea host to inventory before running:
+#       gitea:
+#         ansible_host: 10.0.10.50
+#         vm_role: gitea
+
+- name: Baseline Gitea LXC
+  hosts: gitea
+  become: yes
+  gather_facts: yes
+  roles:
+    - common
+  tags:
+    - gitea
+    - baseline
+
+- name: Install and configure Gitea
+  hosts: gitea
+  become: yes
+  gather_facts: yes
+  vars:
+    gitea_admin_password: "{{ vault_gitea_admin_password }}"
+    gitea_secret_key: "{{ vault_gitea_secret_key }}"
+    gitea_internal_token: "{{ vault_gitea_internal_token }}"
+  roles:
+    - gitea
+  tags:
+    - gitea
+
+- name: Configure Gitea mirror webhook (optional)
+  hosts: gitea
+  become: yes
+  gather_facts: no
+  tasks:
+
+    - name: Wait for Gitea API to be ready
+      wait_for:
+        port: 3000
+        host: "{{ ansible_host }}"
+        delay: 5
+        timeout: 60
+
+    - name: Create blerdmh-lab repository in Gitea
+      uri:
+        url: "http://{{ ansible_host }}:3000/api/v1/user/repos"
+        method: POST
+        headers:
+          Authorization: "token {{ vault_gitea_admin_password }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          name: blerdmh-lab
+          description: "Cybersecurity home lab IaC — mirrored from GitHub"
+          private: true
+          auto_init: false
+        status_code: [201, 409]  # 409 = already exists, that's fine
+      no_log: true
+
+    - name: Display Gitea access info
+      debug:
+        msg: |
+          ✓ Gitea is running at http://10.0.10.50:3000
+          Login: labadmin / (vault_gitea_admin_password)
+          Next: Generate an API token in Gitea UI and add to GitHub secrets as GITEA_MIRROR_TOKEN
+          Path: http://10.0.10.50:3000/user/settings/applications
+  tags:
+    - gitea
+    - gitea-setup

@@ -1,0 +1,239 @@
+name: CD — Deploy to k3s
+
+on:
+  push:
+    branches:
+      - main      # Production deploy
+      - develop   # Staging deploy
+    paths:
+      - 'k3s/**'
+      - 'ansible/**'
+
+concurrency:
+  group: cd-${{ github.ref_name }}
+  cancel-in-progress: false  # Never cancel a deploy mid-flight
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 1 — Determine deploy environment
+  # main → production | develop → staging
+  # ──────────────────────────────────────────────────────────────────────────
+  set-environment:
+    name: Set Deploy Environment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      deploy_k3s: ${{ steps.changes.outputs.k3s }}
+      deploy_ansible: ${{ steps.changes.outputs.ansible }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set environment name
+        id: env
+        run: |
+          if [ "${{ github.ref_name }}" == "main" ]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "Deploying to: PRODUCTION"
+          else
+            echo "environment=staging" >> $GITHUB_OUTPUT
+            echo "Deploying to: STAGING (develop branch)"
+          fi
+
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            k3s:
+              - 'k3s/**'
+            ansible:
+              - 'ansible/**'
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 2 — Deploy k3s manifests
+  # ──────────────────────────────────────────────────────────────────────────
+  deploy-k3s:
+    name: Deploy k3s Manifests (${{ needs.set-environment.outputs.environment }})
+    runs-on: ubuntu-latest
+    needs: set-environment
+    if: needs.set-environment.outputs.deploy_k3s == 'true'
+    environment:
+      name: ${{ needs.set-environment.outputs.environment }}
+      url: https://grafana.blerdmh.com
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v2
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci-runner
+          ephemeral: true
+
+      - name: Verify cluster is healthy before deploy
+        run: |
+          echo "Pre-deploy cluster health check..."
+          # Verify API is reachable
+          curl -sk --max-time 10 https://10.0.20.10:6443/healthz | grep -q "ok" || \
+            (echo "::error::Cluster API unreachable — aborting deploy" && exit 1)
+
+          # Check all nodes are Ready
+          NOT_READY=$(kubectl get nodes --no-headers | grep -v "Ready" | wc -l)
+          if [ "$NOT_READY" -gt "0" ]; then
+            echo "::warning::$NOT_READY node(s) not Ready — proceeding with caution"
+            kubectl get nodes
+          fi
+
+          echo "✓ Cluster healthy"
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.29.3'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_BASE64 }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Apply namespaces first
+        run: |
+          echo "Ensuring namespaces exist..."
+          kubectl apply -f k3s/namespaces/namespaces.yml
+          echo "✓ Namespaces applied"
+
+      - name: Apply sealed secrets
+        run: |
+          echo "Applying sealed secrets..."
+          find k3s/ -name "*-sealed.yml" | while read f; do
+            echo "  Applying: $f"
+            kubectl apply -f "$f"
+          done
+          echo "✓ Sealed secrets applied"
+
+      - name: Deploy changed manifests
+        id: deploy
+        run: |
+          echo "## Deployment Results — ${{ needs.set-environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Manifest | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          FAILED=0
+
+          # Deploy in dependency order
+          DEPLOY_ORDER=(
+            "k3s/ingress"
+            "k3s/monitoring"
+            "k3s/personal"
+            "k3s/media"
+          )
+
+          for dir in "${DEPLOY_ORDER[@]}"; do
+            if [ -d "$dir" ]; then
+              find "$dir" -name "*.yml" | grep -v "sealed\|values" | while read manifest; do
+                echo "Applying: $manifest"
+                if kubectl apply -f "$manifest" 2>&1; then
+                  echo "| ✅ | \`$manifest\` |" >> $GITHUB_STEP_SUMMARY
+                else
+                  echo "| ❌ | \`$manifest\` |" >> $GITHUB_STEP_SUMMARY
+                  FAILED=$((FAILED + 1))
+                fi
+              done
+            fi
+          done
+
+          echo "FAILED=$FAILED" >> $GITHUB_OUTPUT
+
+      - name: Wait for rollouts to complete
+        run: |
+          echo "Waiting for deployments to roll out..."
+          NAMESPACES=(personal media homeauto monitoring ingress)
+          for ns in "${NAMESPACES[@]}"; do
+            DEPLOYMENTS=$(kubectl get deployments -n "$ns" --no-headers 2>/dev/null | awk '{print $1}')
+            for deploy in $DEPLOYMENTS; do
+              echo "  Waiting for $ns/$deploy..."
+              kubectl rollout status deployment/"$deploy" -n "$ns" --timeout=300s || \
+                echo "::warning::$ns/$deploy rollout timeout — check pod status"
+            done
+          done
+          echo "✓ All rollouts complete"
+
+      - name: Post-deploy health check
+        run: |
+          echo "Post-deploy verification..."
+
+          # Check for pods in CrashLoopBackOff or Error state
+          BAD_PODS=$(kubectl get pods -A --no-headers | \
+            grep -E "CrashLoopBackOff|Error|OOMKilled|ImagePullBackOff" | wc -l)
+
+          if [ "$BAD_PODS" -gt "0" ]; then
+            echo "::error::$BAD_PODS pod(s) in unhealthy state after deploy"
+            kubectl get pods -A | grep -E "CrashLoopBackOff|Error|OOMKilled|ImagePullBackOff"
+            exit 1
+          fi
+
+          echo "✓ All pods healthy"
+
+          # Spot-check key services are responding
+          SERVICES=(
+            "https://nextcloud.blerdmh.com"
+            "https://jellyfin.blerdmh.com"
+            "https://grafana.blerdmh.com"
+          )
+          for svc in "${SERVICES[@]}"; do
+            STATUS=$(curl -sk -o /dev/null -w "%{http_code}" --max-time 10 "$svc")
+            if [[ "$STATUS" =~ ^(200|301|302|401|403)$ ]]; then
+              echo "✓ $svc responding ($STATUS)"
+            else
+              echo "::warning::$svc returned $STATUS — may still be starting"
+            fi
+          done
+
+      - name: Disconnect Tailscale
+        if: always()
+        run: sudo tailscale logout
+
+      # On failure — attempt automatic rollback of changed manifests
+      - name: Rollback on failure
+        if: failure() && steps.deploy.outputs.FAILED != '0'
+        run: |
+          echo "::error::Deploy failed — attempting rollback"
+          # Roll back each deployment to previous revision
+          NAMESPACES=(personal media homeauto monitoring ingress)
+          for ns in "${NAMESPACES[@]}"; do
+            kubectl get deployments -n "$ns" --no-headers 2>/dev/null | awk '{print $1}' | \
+            while read deploy; do
+              echo "Rolling back $ns/$deploy..."
+              kubectl rollout undo deployment/"$deploy" -n "$ns" || true
+            done
+          done
+          echo "Rollback attempted — verify cluster state manually"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Notify on deploy completion
+  # ──────────────────────────────────────────────────────────────────────────
+  notify:
+    name: Deploy Notification
+    runs-on: ubuntu-latest
+    needs: [deploy-k3s, set-environment]
+    if: always()
+    steps:
+      - name: Create deployment summary
+        run: |
+          ENV="${{ needs.set-environment.outputs.environment }}"
+          RESULT="${{ needs.deploy-k3s.result }}"
+          EMOJI=$([ "$RESULT" == "success" ] && echo "🚀" || echo "🔥")
+
+          echo "$EMOJI Deploy to $ENV: $RESULT" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "Triggered by: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY

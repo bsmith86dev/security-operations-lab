@@ -1,0 +1,32 @@
+auto lo
+iface lo inet loopback
+
+# Physical NIC — trunk uplink to MokerLink managed switch
+auto eno1
+iface eno1 inet manual
+
+# VLAN-aware Linux bridge
+# All VMs use this bridge with their VLAN tag set in the VM config
+# Native VLAN 10 = Proxmox management UI address
+auto vmbr0
+iface vmbr0 inet static
+    address {{ ansible_host }}/24
+    gateway {{ vlans.mgmt.gw }}
+    bridge-ports eno1
+    bridge-stp off
+    bridge-fd 0
+    bridge-vlan-aware yes
+    bridge-vids 2-4094
+    dns-nameservers {{ lab_dns_server }}
+
+{% if pve_role == 'primary' %}
+# 10G NIC for Ceph storage fabric (NICGIGA unmanaged switch)
+auto eno2
+iface eno2 inet static
+    address 10.0.30.10/24
+{% elif pve_role == 'secondary' %}
+# 2.5G port for Ceph/storage (N1 Mini)
+auto eno2
+iface eno2 inet static
+    address 10.0.30.11/24
+{% endif %}

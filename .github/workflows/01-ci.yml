@@ -1,0 +1,229 @@
+name: CI — Lint, Validate & Scan
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main, develop]
+
+# Cancel in-progress runs for the same branch on new push
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 1 — Secret scanning
+  # Runs first. If secrets are found, all other jobs are skipped.
+  # ──────────────────────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for gitleaks
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # Optional — free tier works without
+
+      - name: Run detect-secrets baseline check
+        run: |
+          pip install detect-secrets
+          # If a .secrets.baseline file exists, audit against it
+          # Otherwise do a full scan and fail on any findings
+          if [ -f .secrets.baseline ]; then
+            detect-secrets audit .secrets.baseline --only-allowlisted
+            git diff --name-only HEAD~1 HEAD | xargs detect-secrets scan --baseline .secrets.baseline
+          else
+            detect-secrets scan --exclude-files '.*-sealed\.yml' --exclude-files 'vault\.yml' \
+              --exclude-files '\.secrets\.baseline' > /tmp/scan-results.json
+            SECRETS_FOUND=$(cat /tmp/scan-results.json | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          count = sum(len(v) for v in data.get('results', {}).values())
+          print(count)
+          ")
+            if [ "$SECRETS_FOUND" -gt "0" ]; then
+              echo "::error::Potential secrets detected! Run 'detect-secrets scan' locally and review."
+              cat /tmp/scan-results.json | python3 -m json.tool
+              exit 1
+            fi
+            echo "No secrets detected."
+          fi
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 2 — YAML lint
+  # ──────────────────────────────────────────────────────────────────────────
+  yaml-lint:
+    name: YAML Lint
+    runs-on: ubuntu-latest
+    needs: secret-scan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint all YAML files
+        run: |
+          yamllint -c .yamllint.yml \
+            ansible/ \
+            k3s/ \
+            --format github
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 3 — Ansible lint
+  # ──────────────────────────────────────────────────────────────────────────
+  ansible-lint:
+    name: Ansible Lint
+    runs-on: ubuntu-latest
+    needs: secret-scan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Ansible + lint tools
+        run: |
+          pip install ansible ansible-lint
+
+      - name: Run ansible-lint
+        run: |
+          ansible-lint ansible/ \
+            --profile=production \
+            --format=github \
+            --exclude ansible/inventory/group_vars/all/vault.yml
+
+      - name: Validate inventory syntax
+        run: |
+          ansible-inventory \
+            -i ansible/inventory/hosts.yml \
+            --list \
+            --yaml > /dev/null
+          echo "Inventory syntax valid"
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 4 — Kubernetes manifest validation (offline)
+  # Uses kubeconform for fast schema validation without cluster access
+  # ──────────────────────────────────────────────────────────────────────────
+  k8s-validate:
+    name: Kubernetes Manifest Validation
+    runs-on: ubuntu-latest
+    needs: secret-scan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz
+          tar xf kubeconform.tar.gz
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Install kubeseal (for sealed secret validation)
+        run: |
+          curl -sSLo kubeseal.tar.gz \
+            https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.26.3/kubeseal-0.26.3-linux-amd64.tar.gz
+          tar xf kubeseal.tar.gz
+          sudo mv kubeseal /usr/local/bin/
+
+      - name: Validate k3s manifests with kubeconform
+        run: |
+          find k3s/ -name "*.yml" -o -name "*.yaml" | \
+          grep -v "sealed" | \
+          xargs kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -summary \
+            -output github
+
+      - name: Check for required namespace declarations
+        run: |
+          bash .github/scripts/check-namespaces.sh
+
+      - name: Validate Helm values files
+        run: |
+          # Ensure Helm values files are syntactically valid YAML
+          find k3s/ -name "*-values.yml" | while read f; do
+            python3 -c "import yaml; yaml.safe_load(open('$f'))" && \
+              echo "✓ $f" || \
+              (echo "✗ $f" && exit 1)
+          done
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 5 — Security policy checks
+  # Enforce lab security standards on all manifests
+  # ──────────────────────────────────────────────────────────────────────────
+  security-policy:
+    name: Security Policy Check
+    runs-on: ubuntu-latest
+    needs: secret-scan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kube-score
+        run: |
+          curl -sSLo kube-score \
+            https://github.com/zegl/kube-score/releases/latest/download/kube-score_linux_amd64
+          chmod +x kube-score
+          sudo mv kube-score /usr/local/bin/
+
+      - name: Run kube-score security checks
+        run: |
+          find k3s/ -name "*.yml" | \
+          grep -v "sealed\|namespace\|pv\b" | \
+          xargs kube-score score \
+            --ignore-test pod-networkpolicy \
+            --ignore-test deployment-has-poddisruptionbudget \
+            --output-format ci \
+            2>&1 | tee /tmp/kube-score-output.txt
+          # Fail only on CRITICAL findings
+          if grep -q "CRITICAL" /tmp/kube-score-output.txt; then
+            echo "::error::Critical security policy violations found"
+            exit 1
+          fi
+
+      - name: Check no containers running as root
+        run: bash .github/scripts/check-no-root.sh
+
+      - name: Check resource limits defined
+        run: bash .github/scripts/check-resource-limits.sh
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # JOB 6 — CI summary badge data
+  # ──────────────────────────────────────────────────────────────────────────
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [yaml-lint, ansible-lint, k8s-validate, security-policy]
+    if: always()
+    steps:
+      - name: Report CI result
+        run: |
+          echo "## CI Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Secret Scan | ${{ needs.secret-scan.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| YAML Lint | ${{ needs.yaml-lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ansible Lint | ${{ needs.ansible-lint.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| K8s Validate | ${{ needs.k8s-validate.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Policy | ${{ needs.security-policy.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY

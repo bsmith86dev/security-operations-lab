@@ -1,0 +1,143 @@
+---
+# ansible/roles/gitea/tasks/main.yml
+# Provisions Gitea on an LXC container on N1 Mini
+# LXC IP: 10.0.10.50 | VLAN 10 (MGMT)
+# Access: http://10.0.10.50:3000 (internal) | via Tailscale remotely
+
+- name: Install Gitea dependencies
+  apt:
+    name:
+      - git
+      - curl
+      - wget
+      - sqlite3
+    state: present
+    update_cache: yes
+
+- name: Create git system user for Gitea
+  user:
+    name: git
+    system: yes
+    shell: /bin/bash
+    home: /home/git
+    create_home: yes
+    comment: "Gitea service user"
+
+- name: Create Gitea directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: git
+    group: git
+    mode: '0750'
+  loop:
+    - /etc/gitea
+    - /var/lib/gitea
+    - /var/lib/gitea/data
+    - /var/lib/gitea/log
+    - /var/lib/gitea/repos
+
+- name: Get latest Gitea version
+  uri:
+    url: https://api.github.com/repos/go-gitea/gitea/releases/latest
+    return_content: yes
+  register: gitea_release
+  when: gitea_version is not defined
+
+- name: Set Gitea version
+  set_fact:
+    gitea_version: "{{ gitea_release.json.tag_name | replace('v', '') }}"
+  when: gitea_version is not defined
+
+- name: Download Gitea binary
+  get_url:
+    url: "https://dl.gitea.com/gitea/{{ gitea_version }}/gitea-{{ gitea_version }}-linux-amd64"
+    dest: /usr/local/bin/gitea
+    mode: '0755'
+    owner: root
+    group: root
+  notify: Restart Gitea
+
+- name: Deploy Gitea app.ini configuration
+  template:
+    src: app.ini.j2
+    dest: /etc/gitea/app.ini
+    owner: git
+    group: git
+    mode: '0640'
+  notify: Restart Gitea
+
+- name: Install Gitea systemd service
+  copy:
+    dest: /etc/systemd/system/gitea.service
+    content: |
+      [Unit]
+      Description=Gitea (Git with a cup of tea)
+      After=network.target
+      Wants=network.target
+
+      [Service]
+      Type=simple
+      User=git
+      Group=git
+      WorkingDirectory=/var/lib/gitea
+      ExecStart=/usr/local/bin/gitea web --config /etc/gitea/app.ini
+      Restart=always
+      RestartSec=5s
+      Environment=USER=git HOME=/home/git GITEA_WORK_DIR=/var/lib/gitea
+
+      # Security hardening
+      PrivateTmp=true
+      ProtectSystem=full
+      NoNewPrivileges=true
+
+      [Install]
+      WantedBy=multi-user.target
+  notify:
+    - Reload systemd
+    - Restart Gitea
+
+- name: Enable and start Gitea
+  systemd:
+    name: gitea
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Wait for Gitea to start
+  wait_for:
+    port: 3000
+    host: "{{ ansible_host }}"
+    delay: 5
+    timeout: 60
+
+- name: Configure Gitea admin user via API
+  uri:
+    url: "http://{{ ansible_host }}:3000/api/v1/users/search?q=labadmin"
+    method: GET
+    status_code: [200]
+  register: admin_check
+  ignore_errors: yes
+
+- name: Create Gitea admin user (first run only)
+  command: >
+    /usr/local/bin/gitea admin user create
+    --username labadmin
+    --password "{{ gitea_admin_password }}"
+    --email "admin@lab.blerdmh.local"
+    --admin
+    --config /etc/gitea/app.ini
+  become: yes
+  become_user: git
+  when: admin_check.json is not defined or admin_check.json.data | length == 0
+  no_log: true
+
+handlers:
+  - name: Reload systemd
+    systemd:
+      daemon_reload: yes
+
+  - name: Restart Gitea
+    systemd:
+      name: gitea
+      state: restarted

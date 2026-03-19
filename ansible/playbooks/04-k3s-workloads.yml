@@ -1,0 +1,90 @@
+---
+# ansible/playbooks/04-k3s-workloads.yml
+# Deploys all k3s workloads after cluster is up
+# Runs kubectl apply from the control plane node
+
+- name: Deploy k3s workloads
+  hosts: k3s_control_plane
+  become: yes
+  gather_facts: no
+  vars:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+    manifests_dir: "{{ playbook_dir }}/../k3s"
+
+  tasks:
+
+    - name: Copy k3s manifests to control plane
+      copy:
+        src: "{{ manifests_dir }}/"
+        dest: /tmp/k3s-manifests/
+        mode: '0644'
+
+    - name: Apply namespaces
+      shell: kubectl apply -f /tmp/k3s-manifests/namespaces/
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Apply sealed secrets
+      shell: |
+        find /tmp/k3s-manifests/ -name '*-sealed.yml' | \
+        while read f; do kubectl apply -f "$f"; done
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      ignore_errors: yes  # Sealed secrets may not exist yet on first run
+
+    - name: Apply ingress (Traefik + Cloudflare tunnel)
+      shell: |
+        kubectl apply -f /tmp/k3s-manifests/ingress/cloudflare-tunnel.yml
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Apply cert-manager ClusterIssuer
+      shell: |
+        kubectl apply -f /tmp/k3s-manifests/ingress/cluster-issuer.yml
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Apply monitoring stack
+      shell: kubectl apply -f /tmp/k3s-manifests/monitoring/
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Apply personal services
+      shell: kubectl apply -f /tmp/k3s-manifests/personal/
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Apply media stack
+      shell: kubectl apply -f /tmp/k3s-manifests/media/
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+    - name: Wait for core deployments to be ready
+      shell: |
+        kubectl rollout status deployment/{{ item.name }} \
+          -n {{ item.namespace }} --timeout=300s
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      loop:
+        - { name: grafana,       namespace: monitoring }
+        - { name: nextcloud,     namespace: personal }
+        - { name: homeassistant, namespace: homeauto }
+        - { name: jellyfin,      namespace: media }
+      ignore_errors: yes  # Some may not be deployed yet
+
+    - name: Show cluster status
+      shell: |
+        echo "=== Nodes ===" && kubectl get nodes && \
+        echo "" && \
+        echo "=== Pods ===" && kubectl get pods -A --field-selector=status.phase!=Running 2>/dev/null | \
+        head -30 || echo "All pods running"
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+      register: cluster_status
+      changed_when: false
+
+    - name: Display cluster status
+      debug:
+        msg: "{{ cluster_status.stdout_lines }}"
+  tags:
+    - workloads

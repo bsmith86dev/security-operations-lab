@@ -1,0 +1,31 @@
+---
+# ansible/roles/security/tasks/node_exporter.yml
+# Installs Prometheus node exporter on security VMs
+# Scraped by Grafana VM (10.0.40.13)
+
+- name: Install prometheus-node-exporter
+  apt:
+    name: prometheus-node-exporter
+    state: present
+    update_cache: yes
+
+- name: Configure node exporter listen address
+  copy:
+    dest: /etc/default/prometheus-node-exporter
+    content: |
+      ARGS="--web.listen-address=0.0.0.0:{{ node_exporter_port }} \
+            --collector.systemd \
+            --collector.processes"
+  notify: Restart node exporter
+
+- name: Enable and start node exporter
+  service:
+    name: prometheus-node-exporter
+    enabled: yes
+    state: started
+
+handlers:
+  - name: Restart node exporter
+    service:
+      name: prometheus-node-exporter
+      state: restarted

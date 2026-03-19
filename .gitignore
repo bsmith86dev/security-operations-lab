@@ -1,0 +1,23 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Ansible
+*.retry
+*.log
+
+# Secrets
+*.vault
+*.key
+*.pem
+.env
+
+# Kubernetes
+kubeconfig
+
+# Terraform (future-proof)
+.terraform/
+*.tfstate
+
+# Misc
+*.swp

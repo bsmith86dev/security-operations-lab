@@ -1,0 +1,84 @@
+---
+# k3s/ingress/cluster-issuer.yml
+# cert-manager ClusterIssuer using Cloudflare DNS-01 challenge
+# This issues real Let's Encrypt certs for *.blerdmh.com
+# No ports need to be open — validation is done via DNS TXT records
+#
+# Prerequisites:
+#   - cert-manager installed (done in 02-k3s.yml playbook)
+#   - cloudflare-credentials secret exists in cert-manager namespace
+#
+# Apply: kubectl apply -f k3s/ingress/cluster-issuer.yml
+
+# Cloudflare API credentials for cert-manager
+# Created by create-secrets.sh — sealed before committing
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cloudflare-api-key
+  namespace: cert-manager
+type: Opaque
+stringData:
+  api-key: SEALED_BY_KUBESEAL_DO_NOT_COMMIT_PLAINTEXT
+---
+# Staging issuer — use this first to test without hitting rate limits
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: "{{ your_email_here }}"
+    privateKeySecretRef:
+      name: letsencrypt-staging-key
+    solvers:
+      - dns01:
+          cloudflare:
+            email: your@email.com
+            apiKeySecretRef:
+              name: cloudflare-api-key
+              key: api-key
+        selector:
+          dnsZones:
+            - blerdmh.com
+---
+# Production issuer — switch to this once staging certs work
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: your@email.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-key
+    solvers:
+      - dns01:
+          cloudflare:
+            email: your@email.com
+            apiKeySecretRef:
+              name: cloudflare-api-key
+              key: api-key
+        selector:
+          dnsZones:
+            - blerdmh.com
+---
+# Wildcard certificate for *.blerdmh.com
+# Covers all subdomains with a single cert
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: blerdmh-wildcard
+  namespace: traefik
+spec:
+  secretName: blerdmh-wildcard-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - "blerdmh.com"
+    - "*.blerdmh.com"
+  duration: 2160h    # 90 days
+  renewBefore: 360h  # Renew 15 days before expiry

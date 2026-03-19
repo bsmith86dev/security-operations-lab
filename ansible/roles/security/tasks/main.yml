@@ -1,0 +1,31 @@
+---
+# ansible/roles/security/tasks/main.yml
+# Provisions security VMs — runs on ids-vm and openvas-vm
+# Wazuh manager has its own install process (see playbook 03-security.yml)
+
+- name: Install Suricata
+  include_tasks: suricata.yml
+  when: vm_role == 'ids'
+
+- name: Install Zeek
+  include_tasks: zeek.yml
+  when: vm_role == 'ids'
+
+- name: Install OpenVAS/Greenbone
+  include_tasks: openvas.yml
+  when: vm_role == 'scanner'
+
+- name: Install Prometheus node exporter on all security VMs
+  include_tasks: node_exporter.yml
+
+- name: Configure log forwarding to Wazuh
+  template:
+    src: rsyslog-wazuh.conf.j2
+    dest: /etc/rsyslog.d/99-wazuh.conf
+  notify: Restart rsyslog
+
+handlers:
+  - name: Restart rsyslog
+    service:
+      name: rsyslog
+      state: restarted

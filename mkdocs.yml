@@ -1,0 +1,104 @@
+site_name: blerdmh Lab
+site_description: Enterprise-grade cybersecurity home lab — fully reproducible via IaC
+site_author: blerdmh
+site_url: https://YOUR_GITHUB_USERNAME.github.io/blerdmh-lab/
+repo_url: https://github.com/YOUR_GITHUB_USERNAME/blerdmh-lab
+repo_name: blerdmh-lab
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    # Dark mode default (fits the security aesthetic)
+    - scheme: slate
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.path
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/shield-lock
+
+plugins:
+  - search
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: date
+  - awesome-pages
+  - mermaid2
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - admonition
+  - tables
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Architecture:
+    - Overview: docs/00-ARCHITECTURE.md
+    - VM Layout: docs/01-PROXMOX-VM-LAYOUT.md
+    - GPU Passthrough: docs/03-GPU-PASSTHROUGH.md
+  - Networking:
+    - Switch Config: switch/mokerlink-vlan-config.md
+    - Firewall Rules: switch/opnsense-firewall-rules.md
+  - Kubernetes:
+    - Namespaces: k3s/namespaces/namespaces.md
+    - Ingress & Tunnel: k3s/ingress/index.md
+    - Personal Services: k3s/personal/index.md
+    - Media Stack: k3s/media/index.md
+    - Monitoring: k3s/monitoring/index.md
+  - CI/CD:
+    - Pipeline Overview: docs/cicd/overview.md
+    - Secrets: docs/cicd/secrets.md
+  - Rebuild Guide: docs/02-REBUILD-GUIDE.md
+  - Portfolio Projects: docs/portfolio-projects.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/YOUR_GITHUB_USERNAME
+    - icon: fontawesome/brands/linkedin
+      link: https://linkedin.com/in/YOUR_LINKEDIN
+
+  # Custom status badges
+  status:
+    new: Recently added
+    deprecated: Deprecated
+
+extra_css:
+  - stylesheets/extra.css

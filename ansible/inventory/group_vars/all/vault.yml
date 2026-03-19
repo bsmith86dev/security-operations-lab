@@ -1,0 +1,44 @@
+---
+# ansible/inventory/group_vars/all/vault.yml
+# THIS FILE MUST BE ENCRYPTED before committing:
+#   ansible-vault encrypt ansible/inventory/group_vars/all/vault.yml
+#
+# Encrypt: ansible-vault encrypt vault.yml
+# Edit:    ansible-vault edit vault.yml
+# View:    ansible-vault view vault.yml
+# Decrypt: ansible-vault decrypt vault.yml  (never commit decrypted)
+#
+# To use a password file instead of prompting:
+#   echo "your-vault-password" > ~/.vault-pass
+#   chmod 600 ~/.vault-pass
+#   (ansible.cfg already points to ~/.vault-pass)
+
+# ─── Tailscale ─────────────────────────────────────────────────────────────
+vault_tailscale_auth_key: "tskey-auth-REPLACE_ME"
+
+# ─── SSH ───────────────────────────────────────────────────────────────────
+vault_lab_ssh_public_key: "ssh-ed25519 REPLACE_ME labadmin@blerdmh-lab"
+
+# ─── Gitea ─────────────────────────────────────────────────────────────────
+vault_gitea_admin_password: "REPLACE_ME_strong_password"
+vault_gitea_secret_key: "REPLACE_ME_random_64chars"
+vault_gitea_internal_token: "REPLACE_ME_random_64chars"
+
+# ─── Wazuh ─────────────────────────────────────────────────────────────────
+vault_wazuh_api_password: "REPLACE_ME_strong_password"
+vault_wazuh_indexer_password: "REPLACE_ME_strong_password"
+
+# ─── Proxmox ───────────────────────────────────────────────────────────────
+vault_proxmox_api_token_id: "labadmin@pam!cicd"
+vault_proxmox_api_token_secret: "REPLACE_ME"
+
+# ─── Cloudflare ────────────────────────────────────────────────────────────
+vault_cloudflare_api_email: "your@email.com"
+vault_cloudflare_api_key: "REPLACE_ME"
+vault_cloudflare_tunnel_token: "REPLACE_ME"
+
+# ─── Services ──────────────────────────────────────────────────────────────
+vault_nextcloud_admin_password: "REPLACE_ME_strong_password"
+vault_nextcloud_mysql_root_password: "REPLACE_ME_strong_password"
+vault_nextcloud_mysql_password: "REPLACE_ME_strong_password"
+vault_grafana_admin_password: "REPLACE_ME_strong_password"
