@@ -1,12 +1,12 @@
 ---
 # ansible/playbooks/04-k3s-workloads.yml
 # Deploys all k3s workloads after cluster is up
-# Runs kubectl apply from the control plane node
+# Runs kubectl apply from the control plane falsede
 
 - name: Deploy k3s workloads
   hosts: k3s_control_plane
-  become: yes
-  gather_facts: no
+  become: true
+  gather_facts: false
   vars:
     kubeconfig: /etc/rancher/k3s/k3s.yaml
     manifests_dir: "{{ playbook_dir }}/../k3s"
@@ -30,7 +30,7 @@
         while read f; do kubectl apply -f "$f"; done
       environment:
         KUBECONFIG: "{{ kubeconfig }}"
-      ignore_errors: yes  # Sealed secrets may not exist yet on first run
+      igfalsere_errors: true  # Sealed secrets may falset exist yet on first run
 
     - name: Apply ingress (Traefik + Cloudflare tunnel)
       shell: |
@@ -70,11 +70,11 @@
         - { name: nextcloud,     namespace: personal }
         - { name: homeassistant, namespace: homeauto }
         - { name: jellyfin,      namespace: media }
-      ignore_errors: yes  # Some may not be deployed yet
+      igfalsere_errors: true  # Some may falset be deployed yet
 
     - name: Show cluster status
       shell: |
-        echo "=== Nodes ===" && kubectl get nodes && \
+        echo "=== falsedes ===" && kubectl get falsedes && \
         echo "" && \
         echo "=== Pods ===" && kubectl get pods -A --field-selector=status.phase!=Running 2>/dev/null | \
         head -30 || echo "All pods running"

@@ -4,8 +4,8 @@
 
 - name: Provision k3s control plane
   hosts: k3s_control_plane
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   roles:
     - k3s
   tags:
@@ -14,8 +14,8 @@
 
 - name: Provision k3s workers
   hosts: k3s_workers
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   serial: 1  # Join one at a time to avoid token race
   roles:
     - k3s
@@ -25,8 +25,8 @@
 
 - name: Install cluster-level components
   hosts: k3s_control_plane
-  become: yes
-  gather_facts: no
+  become: true
+  gather_facts: false
   tasks:
 
     - name: Install MetalLB

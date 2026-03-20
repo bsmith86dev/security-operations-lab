@@ -4,8 +4,8 @@
 
 - name: Install Wazuh all-in-one (manager + indexer + dashboard)
   hosts: wazuh-vm
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   tasks:
 
     - name: Check if Wazuh is already installed
@@ -107,7 +107,7 @@
     - name: Enable Wazuh agents
       service:
         name: wazuh-manager
-        enabled: yes
+        enabled: true
         state: started
 
     - name: Display Wazuh dashboard credentials
@@ -131,8 +131,8 @@
 
 - name: Install IDS stack (Suricata + Zeek)
   hosts: ids-vm
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   roles:
     - common
     - security
@@ -141,8 +141,8 @@
 
 - name: Install OpenVAS vulnerability scanner
   hosts: openvas-vm
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   roles:
     - common
     - security
@@ -151,8 +151,8 @@
 
 - name: Install Grafana monitoring stack
   hosts: grafana-vm
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   tasks:
 
     - name: Add Grafana apt repository
@@ -169,7 +169,7 @@
       apt:
         name: grafana
         state: present
-        update_cache: yes
+        update_cache: true
 
     - name: Install Prometheus
       get_url:
@@ -180,7 +180,7 @@
       unarchive:
         src: /tmp/prometheus.tar.gz
         dest: /usr/local/bin/
-        remote_src: yes
+        remote_src: true
         extra_opts: [--strip-components=1]
         creates: /usr/local/bin/prometheus
 
@@ -208,7 +208,7 @@
     - name: Enable and start Grafana + Prometheus
       service:
         name: "{{ item }}"
-        enabled: yes
+        enabled: true
         state: started
       loop:
         - grafana-server

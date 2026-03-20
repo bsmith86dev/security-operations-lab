@@ -4,8 +4,8 @@
 
 - name: Baseline all Linux hosts
   hosts: linux_hosts
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   roles:
     - common
   tags:

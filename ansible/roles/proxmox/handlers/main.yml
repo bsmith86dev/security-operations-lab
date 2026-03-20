@@ -1,0 +1,23 @@
+# ansible/roles/proxmox/handlers/main.yml
+---
+- name: Restart networking
+  service:
+    name: networking
+    state: restarted
+
+- name: Restart pveproxy
+  service:
+    name: pveproxy
+    state: restarted
+
+# NOTE: This handler name matches the notify in the repo task exactly.
+# Handlers run once at the end of the play, so even if the repo task
+# triggers this multiple times it only fires once — which is correct.
+- name: Update apt cache
+  apt:
+    update_cache: true
+
+- name: Restart node exporter
+  service:
+    name: prometheus-node-exporter
+    state: restarted

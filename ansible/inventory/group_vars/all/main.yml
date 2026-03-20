@@ -15,16 +15,16 @@ lab_ntp_server: 10.0.10.1
 
 # VLAN subnets — used in firewall rules and Wazuh agent config
 vlans:
-  mgmt:      { id: 10, subnet: "10.0.10.0/24", gw: "10.0.10.1" }
-  servers:   { id: 20, subnet: "10.0.20.0/24", gw: "10.0.20.1" }
-  ceph_pub:  { id: 30, subnet: "10.0.30.0/24", gw: "10.0.30.1" }
+  mgmt: { id: 10, subnet: "10.0.10.0/24", gw: "10.0.10.1" }
+  servers: { id: 20, subnet: "10.0.20.0/24", gw: "10.0.20.1" }
+  ceph_pub: { id: 30, subnet: "10.0.30.0/24", gw: "10.0.30.1" }
   ceph_clus: { id: 31, subnet: "10.0.31.0/24", gw: null }
-  security:  { id: 40, subnet: "10.0.40.0/24", gw: "10.0.40.1" }
-  iot:       { id: 50, subnet: "10.0.50.0/24", gw: "10.0.50.1" }
-  production:{ id: 60, subnet: "10.0.60.0/24", gw: "10.0.60.1" }
-  red_team:  { id: 61, subnet: "10.0.61.0/24", gw: "10.0.61.1" }
-  purple_team:{ id: 62, subnet: "10.0.62.0/24", gw: "10.0.62.1" }
-  guest:     { id: 70, subnet: "10.0.70.0/24", gw: "10.0.70.1" }
+  security: { id: 40, subnet: "10.0.40.0/24", gw: "10.0.40.1" }
+  iot: { id: 50, subnet: "10.0.50.0/24", gw: "10.0.50.1" }
+  production: { id: 60, subnet: "10.0.60.0/24", gw: "10.0.60.1" }
+  red_team: { id: 61, subnet: "10.0.61.0/24", gw: "10.0.61.1" }
+  purple_team: { id: 62, subnet: "10.0.62.0/24", gw: "10.0.62.1" }
+  guest: { id: 70, subnet: "10.0.70.0/24", gw: "10.0.70.1" }
 
 # ─── Security stack endpoints ─────────────────────────────────────────────
 wazuh_manager_ip: 10.0.40.10

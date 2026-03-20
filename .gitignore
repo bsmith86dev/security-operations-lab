@@ -21,3 +21,4 @@ kubeconfig
 
 # Misc
 *.swp
+.vs/

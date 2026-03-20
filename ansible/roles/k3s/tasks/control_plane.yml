@@ -6,14 +6,14 @@
     name: net.ipv4.ip_forward
     value: '1'
     state: present
-    reload: yes
+    reload: true
 
 - name: Enable IPv6 forwarding
   sysctl:
     name: net.ipv6.conf.all.forwarding
     value: '1'
     state: present
-    reload: yes
+    reload: true
 
 - name: Load required kernel modules
   modprobe:
@@ -71,7 +71,7 @@
   fetch:
     src: /etc/rancher/k3s/k3s.yaml
     dest: ~/.kube/blerdmh-lab-config
-    flat: yes
+    flat: true
 
 - name: Fix kubeconfig server address
   delegate_to: localhost

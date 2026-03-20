@@ -12,15 +12,15 @@
       - wget
       - sqlite3
     state: present
-    update_cache: yes
+    update_cache: true
 
 - name: Create git system user for Gitea
   user:
     name: git
-    system: yes
+    system: true
     shell: /bin/bash
     home: /home/git
-    create_home: yes
+    create_home: true
     comment: "Gitea service user"
 
 - name: Create Gitea directories
@@ -40,7 +40,7 @@
 - name: Get latest Gitea version
   uri:
     url: https://api.github.com/repos/go-gitea/gitea/releases/latest
-    return_content: yes
+    return_content: true
   register: gitea_release
   when: gitea_version is not defined
 
@@ -100,9 +100,9 @@
 - name: Enable and start Gitea
   systemd:
     name: gitea
-    enabled: yes
+    enabled: true
     state: started
-    daemon_reload: yes
+    daemon_reload: true
 
 - name: Wait for Gitea to start
   wait_for:
@@ -117,7 +117,7 @@
     method: GET
     status_code: [200]
   register: admin_check
-  ignore_errors: yes
+  ignore_errors: true
 
 - name: Create Gitea admin user (first run only)
   command: >
@@ -127,17 +127,9 @@
     --email "admin@lab.blerdmh.local"
     --admin
     --config /etc/gitea/app.ini
-  become: yes
+  become: true
   become_user: git
   when: admin_check.json is not defined or admin_check.json.data | length == 0
   no_log: true
 
-handlers:
-  - name: Reload systemd
-    systemd:
-      daemon_reload: yes
 
-  - name: Restart Gitea
-    systemd:
-      name: gitea
-      state: restarted

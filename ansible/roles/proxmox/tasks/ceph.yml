@@ -67,7 +67,7 @@
   shell: ceph -s
   register: ceph_status
   changed_when: false
-  ignore_errors: yes
+  ignore_errors: true
 
 - name: Display Ceph status
   debug:

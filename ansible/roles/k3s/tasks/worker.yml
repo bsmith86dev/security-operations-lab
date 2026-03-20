@@ -6,8 +6,8 @@
     name: net.ipv4.ip_forward
     value: '1'
     state: present
-    reload: yes
-
+    reload: true
+    
 - name: Load required kernel modules
   modprobe:
     name: "{{ item }}"

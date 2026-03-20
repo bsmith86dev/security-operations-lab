@@ -23,9 +23,3 @@
     src: rsyslog-wazuh.conf.j2
     dest: /etc/rsyslog.d/99-wazuh.conf
   notify: Restart rsyslog
-
-handlers:
-  - name: Restart rsyslog
-    service:
-      name: rsyslog
-      state: restarted

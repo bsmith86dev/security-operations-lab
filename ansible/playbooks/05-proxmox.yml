@@ -4,8 +4,8 @@
 
 - name: Configure Proxmox nodes
   hosts: proxmox_nodes
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   roles:
     - proxmox
   tags:
